@@ -1,0 +1,645 @@
+---
+title: "Project Analysis"
+author: "Elyjiah Potter"
+date: "12/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(png)
+library(naniar)
+library(plotly)
+library(class)
+library(caret)
+library(e1071)
+library(maps)
+library(mapproj)
+library(usmap)
+library(maptools)
+library(rgdal)
+library(GGally)
+library(e1071)
+```
+
+# Import Dataset
+
+```{r}
+house_train = read.csv("/Users/elyjiahpotter/Desktop/house-prices-advanced-regression-techniques/train.csv")
+house_test = read.csv("/Users/elyjiahpotter/Desktop/house-prices-advanced-regression-techniques/test.csv")
+
+head(house_train)
+head(house_test)
+```
+# Analysis 1 
+
+<br>
+
+## Part 1
+
+<br>
+
+<br>
+
+Ames only sells houses in the NAmes, Edwards and BrkSide neighborhoods and would like to simply get an estimate of how the SalePrice of the house is related to the square footage of the living area of the house (GrLIvArea) and if the SalesPrice (and its relationship to square footage) depends on which neighborhood the house is located in. 
+
+Build and fit a model that will answer this question, keeping in mind that realtors prefer to talk about living area in increments of 100 sq. ft. 
+
+<br>
+
+### Create Model Dataset
+
+<br>
+
+```{r}
+house_model_data =  house_train %>%
+  filter(Neighborhood=="NAmes" 
+         |  Neighborhood == "Edwards" 
+         | Neighborhood == "BrkSide") %>%
+  select(Neighborhood, GrLivArea, SalePrice) %>%
+  mutate(LivingArea = GrLivArea / 100)
+```
+
+<br>
+
+### Sale Price vs Living Area
+
+<br>
+
+```{r}
+house_model_data %>%
+  ggplot(aes(x = LivingArea, y = SalePrice)) +
+  geom_point(color = "forest green", position = "jitter") +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  ggtitle("Housing Price vs Square Footage") +
+  xlab("Square Footage (Increments of 100 ft)") +
+  ylab("Housing Price")
+
+# Notes - we see some low priced high value outliers
+
+house_train %>%
+  filter(SalePrice < 200000 & GrLivArea > 4000) %>%
+  select(Id, OverallCond, SalePrice)
+
+
+# Compare numeric attributes through a loop
+
+outliers = select_if(house_train, is.numeric) %>%
+  filter(Id == 524 | Id == 1299)
+
+no_outliers = select_if(house_train, is.numeric) %>%
+  filter(Id != 524 & Id != 1299)
+  
+columns = data.frame(colnames(outliers))
+colnames(columns) = c("column")
+comparison = data.frame(matrix(ncol = 7, nrow = 90))
+colnames(comparison) = c("Attribute", "Min", "1st Qrt", "Med","Mean","3rd Qrt", "Max")
+for (i in 1:38) 
+{
+ comparison[i,1] = columns$column[i]
+ comparison[i,2] = paste("Outliers:  ", summary(outliers[i])[1], "Non Outliers: ", summary(no_outliers[i])[1])
+ comparison[i,3] = paste("Outliers:  ", summary(outliers[i])[2], "Non Outliers: ", summary(no_outliers[i])[2])
+ comparison[i,4] = paste("Outliers:  ", summary(outliers[i])[3], "Non Outliers: ", summary(no_outliers[i])[3])
+ comparison[i,5] = paste("Outliers:  ", summary(outliers[i])[4], "Non Outliers: ", summary(no_outliers[i])[4])
+ comparison[i,6] = paste("Outliers:  ", summary(outliers[i])[5], "Non Outliers: ", summary(no_outliers[i])[5])
+ comparison[i,7] = paste("Outliers:  ", summary(outliers[i])[6], "Non Outliers: ", summary(no_outliers[i])[6])
+}
+
+comparison %>%
+  filter(!is.na(Med)) %>%
+  select(Attribute,Med, Mean)
+
+
+# From this, we can see that the mean finished basement size of the two outlier properties is significantly larger than the mean finished basement size of the non outlier properties.
+
+# At appears that finished basement size MAY be included in the square footage of the home, and that this would contribute to the price discrepancy. 
+
+# To check this:
+
+house_train %>%
+  mutate(NonBasementLivingArea = GrLivArea - BsmtFinSF1) %>%
+  filter(Neighborhood=="NAmes" 
+         |  Neighborhood == "Edwards" 
+         | Neighborhood == "BrkSide") %>%
+  select(Neighborhood, GrLivArea, SalePrice, NonBasementLivingArea) %>%
+  ggplot(aes(x = NonBasementLivingArea, y = SalePrice)) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_point() +
+  ggtitle("House Price vs (Total Living Area - Finished Basement Living Area") +
+  ylab("Sale Price") +
+  xlab("General Living Area Size - Finished Basement Area Size")
+  
+# Notes - We don't see the same indications of major outliers in this comparison. That said, we also see some houses with size 0, which would indicate that the basement size is not included in the general square footage.
+
+
+# Another factor could be house price breakdown by size in the neighborhood of these outliers (Edwards) vs other neighborhoods
+
+house_sizes = house_train %>%
+  filter(Neighborhood=="NAmes" 
+         |  Neighborhood == "Edwards" 
+         | Neighborhood == "BrkSide")
+
+size_factor = cut(house_sizes$GrLivArea, 
+                  breaks = c(0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000), 
+                  labels = c("0 - 500", "500 - 1000", "1000-1500", "1500-2000", "2000-2500", "2500-3000", "3000-3500", "3500-4000", "4000-4500", "4500-5000", "5000-5500", "5500-6000"))
+
+house_sizes = house_sizes %>%
+  mutate(size_range = size_factor)
+
+
+
+house_sizes %>%
+  filter(Neighborhood == "Edwards") %>%
+  select(size_range, SalePrice) %>%  
+  group_by(size_range) %>%
+  summarize(avg_price = mean(SalePrice)) %>%
+  ggplot(aes(x = size_range, y =  avg_price)) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_bar(stat = "identity") +
+  ggtitle("House Price vs House Size - Edwards Neighborhood") +
+  ylab("Sale Price") +
+  xlab("House Size")
+
+house_sizes %>%
+  filter(Neighborhood != "Edwards") %>%
+  select(size_range, SalePrice) %>%  
+  group_by(size_range) %>%
+  summarize(avg_price = mean(SalePrice)) %>%
+  ggplot(aes(x = size_range, y =  avg_price)) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_bar(stat = "identity") +
+  ggtitle("House Price vs House Size - Non Edwards Neighborhoods") +
+  ylab("Sale Price") +
+  xlab("House Size")
+
+# Here we see that in the Edwards neighborhood, avg price decreases for houses larger than 2500 square feet, while in other neighborhoods, the price continues to increase untili the 3000 sq ft range!
+
+# This means that we do not have sufficient evidence to throw out these outliers, and we will include them in our model.
+
+fit1 = lm(SalePrice ~ LivingArea, data = house_model_data)
+summary(fit1)
+
+```
+
+<br>
+
+### Sale Price vs Square Footage and Neighborhood
+
+<br>
+
+```{r}
+house_model_data %>%
+  ggplot(aes(x = reorder(Neighborhood, SalePrice), y = SalePrice)) +
+  geom_point(color = "forest green", position = "jitter") +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  ggtitle("Housing Price vs Neighborhood") +
+  xlab("Neighborhood") +
+  ylab("Housing Price")
+
+# Notes - Each distribution of prices per neighborhood is roughly normally distributed, though they are all skewed upwards like we'd expect.
+
+# Since we're building a model to predict average house price per given attribute, and we have a large enough sample size, we may rely on CLT for normality.
+
+
+
+house_sizes %>%
+  group_by(Neighborhood, size_range) %>%
+  summarize(avg_price = mean(SalePrice), count = n())
+
+price_factor =  cut(house_sizes$SalePrice, 
+                    breaks = c(0, 50000, 100000, 150000, 200000, 250000, 300000, 350000, 400000),
+                    labels = c("0-50k", "50k-100k", "100k-150k", "150k-200k", "200k-250k", "250k-300k", "300k-350k", "350k-400k"))
+
+house_size_price = house_sizes %>%
+  mutate(price_range = price_factor)
+
+house_size_price %>%
+  ggplot(aes(x = price_range, fill = Neighborhood )) +
+  geom_histogram(stat="count") +
+  facet_wrap(~Neighborhood) +
+  theme(axis.text.x = element_text(angle = 50, 
+                                   vjust = 1, 
+                                   hjust = 1,
+                                   size = 8)) +
+  ggtitle("Frequencies: Price Range vs Neighborhood")
+
+# It is clear that the NAmes neighborhood has a higher frequency of more expensive housing listing than eiither BrkSide or Edwards.
+
+
+AmesModel = lm(SalePrice ~ LivingArea + Neighborhood + LivingArea*Neighborhood, data = house_model_data)
+summary(AmesModel)
+
+AmesModel.res = resid(AmesModel)
+
+ResidPlotData = cbind(house_model_data,AmesModel.res)
+
+ResidPlotData %>%
+  ggplot(aes(x = SalePrice, y = AmesModel.res)) +
+  geom_point() +
+  ggtitle("Residual Plot")
+
+# We can see quite a bit of change in variance as sale price increases. It is evident that heteroscedasticity is an issue here.
+
+# To deal with this, we'll use a weighted least squares model.
+
+wt = 1 / lm(abs(AmesModel$residuals) ~ AmesModel$fitted.values)$fitted.values^2
+
+wls_AmesModel = lm(SalePrice ~ LivingArea + Neighborhood + LivingArea*Neighborhood, data = house_model_data, weights = wt)
+
+summary(wls_AmesModel)
+
+wls_AmesModel.res = resid(wls_AmesModel)
+
+ResidPlotData = cbind(house_model_data,wls_AmesModel.res)
+
+ResidPlotData %>%
+  ggplot(aes(x = SalePrice, y = wls_AmesModel.res)) +
+  geom_point() +
+  ggtitle("Residual Plot")
+
+# This is still not the ideal random cloud of residuals that we want to see, but it is better than the previous model.
+
+# It may be that building a model off of house size and neighborhood alone is not ideal. We'll move forward with this model for this section.
+```
+
+### Data Transformation to account for variance issue
+
+```{r}
+
+
+log_data = house_model_data %>%
+  mutate(log_sale = log(SalePrice))
+
+log_AmesModel = lm(log_sale ~ LivingArea + Neighborhood + LivingArea*Neighborhood, data = log_data)
+summary(log_AmesModel)
+
+log_AmesModel.res = resid(log_AmesModel)
+
+log_ResidPlotData = cbind(log_data,log_AmesModel.res)
+
+log_ResidPlotData %>%
+  ggplot(aes(x = log_sale, y = log_AmesModel.res)) +
+  geom_point() +
+  ggtitle("Residual Plot")
+
+log_wt = 1 / lm(abs(log_AmesModel$residuals) ~ log_AmesModel$fitted.values)$fitted.values^2
+
+log_wls_AmesModel = lm(log_sale ~ LivingArea + Neighborhood + LivingArea*Neighborhood, data = log_data, weights = log_wt)
+
+summary(log_wls_AmesModel)
+
+log_wls_AmesModel.res = resid(log_wls_AmesModel)
+
+log_ResidPlotData = cbind(log_data,log_wls_AmesModel.res)
+
+log_ResidPlotData %>%
+  ggplot(aes(x = log_sale, y = log_wls_AmesModel.res)) +
+  geom_point() +
+  ggtitle("Residual Plot")
+
+```
+
+**Results:** The log transformation on sales data did not have a strong affect on the residual plot. If anything, the resulting model showed an increased violation of constant variance. We will move forward with the original model.
+
+<br>
+
+## Part 2
+
+<br>
+
+<br>
+
+Provide your client with the estimate (or estimates if it varies by neighborhood) as well as confidence intervals for any estimate(s) you provide. 
+
+<br>
+
+```{r}
+summary(wls_AmesModel)
+confint(wls_AmesModel)
+```
+
+<br>
+
+### Model:
+
+**General**
+
+$\text{Sales Price} = 8839.5 + 9796.8 \cdot (\text{Living Area}) + 50836.7 \cdot (\text{Edwards}) + 66984.1 \cdot (\text{NAmes}) - 4611.9 \cdot \text{(Edwards} \cdot \text{Living Area}) - 4453.5 \cdot (\text{NAmes} \cdot \text{Living Area})$
+
+<br>
+
+**BrkSide**
+
+$\text{Sales Price} = 8839.5 + 9796.8 \cdot (\text{Living Area}) + 50836.7 \cdot (0) + 66984.1 \cdot (0) - 4611.9 \cdot (0 \cdot \text{Living Area}) - 4453.5 \cdot (0 \cdot \text{Living Area})$
+
+$\longrightarrow \text{Sales Price} = 8839.5 + 9796.8 \cdot (\text{Living Area})$
+
+**Edwards**
+
+$\text{Sales Price} = 8839.5 + 9796.8 \cdot (\text{Living Area}) + 50836.7 \cdot (1) + 66984.1 \cdot (0) - 4611.9 \cdot (1 \cdot \text{Living Area}) - 4453.5 \cdot (0 \cdot \text{Living Area})$
+
+$\longrightarrow \text{Sales Price} = 8839.5 + 8716.3 \cdot (\text{Living Area}) + 50836.7 - 4611.9 \cdot (\text{Living Area})$
+
+$\longrightarrow \text{Sales Price} = 59676.2 + 4104.4 \cdot (\text{Living Area})$
+
+**NAmes**
+
+$\text{Sales Price} = 8839.5 + 9796.8 \cdot (\text{Living Area}) + 50836.7 \cdot (0) + 66984.1 \cdot (1) - 4611.9 \cdot (0 \cdot \text{Living Area}) - 4453.5 \cdot (1 \cdot \text{Living Area})$
+
+$\longrightarrow \text{Sales Price} = 8839.5 + 8716.3 \cdot (\text{Living Area}) + 66984.1 - 4453.5 \cdot (\text{Living Area})$
+
+$\longrightarrow \text{Sales Price} = 75823.6 + 4262.8 \cdot (\text{Living Area})$
+
+
+
+## Part 3
+
+<br>
+
+<br>
+
+It turns out that Century 21’s leadership team has a member that has some statistical background. Therefore, make sure and provide evidence that the model assumptions are met and that any suspicious observations (outliers / influential observations) have been identified and addressed. 
+
+<br>
+
+## Outliers
+
+#### (Note that this is essentially a repeat of previous analysis above)
+```{r}
+
+house_model_data %>%
+  ggplot(aes(x = LivingArea, y = SalePrice, color = Neighborhood)) +
+  geom_point(position = "jitter") +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  ggtitle("Housing Price vs Square Footage") +
+  xlab("Square Footage (Increments of 100 ft)") +
+  ylab("Housing Price")
+
+# We see some lower priced, higher square footage houses in the edwards neighborhood that appear to be outliers.
+
+house_sizes %>%
+  filter(Neighborhood == "Edwards") %>%
+  select(size_range, SalePrice) %>%  
+  group_by(size_range) %>%
+  summarize(avg_price = mean(SalePrice)) %>%
+  ggplot(aes(x = size_range, y =  avg_price)) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_bar(stat = "identity") +
+  ggtitle("House Price vs House Size - Edwards Neighborhood") +
+  ylab("Sale Price") +
+  xlab("House Size")
+
+house_sizes %>%
+  filter(Neighborhood != "Edwards") %>%
+  select(size_range, SalePrice) %>%  
+  group_by(size_range) %>%
+  summarize(avg_price = mean(SalePrice)) %>%
+  ggplot(aes(x = size_range, y =  avg_price)) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  geom_bar(stat = "identity") +
+  ggtitle("House Price vs House Size - Non Edwards Neighborhoods") +
+  ylab("Sale Price") +
+  xlab("House Size")
+
+# Here we see that in the Edwards neighborhood, avg price decreases for houses larger than 2500 square feet, while in other neighborhoods, the price continues to increase untili the 3000 sq ft range!
+
+# This means that we do not have sufficient evidence to throw out these outliers, and we will include them in our model.
+```
+
+## Assumptions
+
+#### Linearity
+
+* As evidenced in the following charts, the relationship between housing price and square footage is relatively linear, with the exception of the outliers noted in the previous section for the Edwards neighborhood
+<br>
+
+```{r}
+
+house_model_data %>%
+  ggplot(aes(x = LivingArea, y = SalePrice, color = Neighborhood)) +
+  geom_point(position = "jitter") +
+  facet_wrap(~Neighborhood) +
+  scale_y_continuous(labels=scales::dollar_format()) +
+  ggtitle("Housing Price vs Square Footage") +
+  xlab("Square Footage (Increments of 100 ft)") +
+  ylab("Housing Price")
+
+```
+
+<br>
+
+#### Constant Variance
+
+```{r}
+ResidPlotData %>%
+  ggplot(aes(x = SalePrice, y = wls_AmesModel.res)) +
+  geom_point() +
+  ggtitle("Residual Plot")
+```
+
+* We can see here that we do not have the ideal constant variance that we'd like to see for a model like this
+
+* A previous attempt at a log transformation on sale price (see above), yielded a stronger violation of this assumption.
+
+* As a result, we will note this and move forward with caution - is is likely that a more complex model than once using only house size and neighborhood is ideal.
+
+#### Normality
+
+```{r}
+
+# House Price
+house_model_data %>%
+  ggplot(aes(x = SalePrice, fill = Neighborhood)) +
+  geom_histogram() +
+  facet_wrap(~Neighborhood) +
+  scale_x_continuous(labels=scales::dollar_format()) +
+  theme(axis.text.x = element_text(angle = 50, 
+                                   vjust = 1, 
+                                   hjust = 1,
+                                   size = 8)) +
+  ggtitle("Price Distributions by Neighborhood") 
+
+# House Size
+house_model_data %>%
+  ggplot(aes(x = LivingArea, fill = Neighborhood)) +
+  geom_histogram() +
+  facet_wrap(~Neighborhood) +
+  theme(axis.text.x = element_text(angle = 50, 
+                                   vjust = 1, 
+                                   hjust = 1,
+                                   size = 8)) +
+  ggtitle("House Size Distributions by Neighborhood")
+```
+
+* We can see that in general, the distributions of house prices and house sizes are right skewed.
+
+* This is a violation of normality, but since we are relying on averages for our model, we can rely on the central limit theorem for normality.
+
+#### Independence
+
+* It is safe to assume that the square footage of one house does not affect the square footage of another house, and that the neighborhood of one house does not affect the neighborhood of another house, so we may assume independence for the variables used in our model.
+
+<br>
+
+<br>
+
+## Part 4
+
+<br>
+
+<br>
+
+Finally, of course, provide your client with a well written conclusion that quantifies the relationship between living area and sale price with respect to these three neighborhoods. Remember that the company is only concerned with the three neighborhoods they sell in. 
+
+<br>
+
+
+#### BrkSide
+
+$\text{Sales Price} = 8839.5 + 9796.8 \cdot (\text{Living Area})$
+
+According to our model, the sales price for a home in BrkSide has an intercept of \$8839.5 with a p-value of 0.00565 (t-test), which is statistically significant at the alpha = 0.05 confidence level, so we may reject the null hypothesis that the intercept is equal to 0. The confidence interval for this intercept is (2594.81, 15084.29). Note that 0 does not fall within this interval. It should be noted that this intercept is an extrapolation, since we have no data points in our set with a home size of 0 square feet.
+
+The model also includes a slope of 9796.8 in relationship to living area size. This means that, holding any other factors constant, for each increase of 100 square feet in living area ini a BrkSide home, we can expect a price increase of \$9796.80. The p-value associated with this slope is less than 0.0001 (t-test), which is statistically significant at the alpha = 0.05 confidence level, so we may reject the null hypothesis that the slope is equal to 0. The confidence interval for the slope is (8897.47, 10696.18). Note that 0 does not fall within this interval.
+
+#### Edwards
+
+$\text{Sales Price} = 8839.5 + 8716.3 \cdot (\text{Living Area}) + 50836.7 - 4611.9 \cdot (\text{Living Area})$
+
+$\longrightarrow \text{Sales Price} = 59676.2 + 4104.4 \cdot (\text{Living Area})$
+
+For a home in Edwards, we can expect a intercept increase of \$50836.70 from the intercept associated with a BrkSide property. This adjustment has an associated p-value of less than 0.0001 (t-test), which is statistically significant at the alpha = 0.05 confidence level, so we may reject the null hypothesis that the change in intercept is equal to 0. The confidence interval for this intercept adjustment is (34830.03, 66843.46). Note that 0 does not fall within this interval.
+
+The slope adjustment for home size for an Edwards home in comparison to a BrkSide home is -\$4611.90, with a p-value of less than 0.0001 (t-test), which is statistically significant at the alpha = 0.05 confidence level. As a result, we may reject the null hypothesis that the slope adjustment is equal to 0. The confidence interval for this change in slope is (-6086.55, 3137.16). Note that 0 does not fall within this interval.
+
+The adjusted model for an Edwards home has an intercept of \$59676.20, which is an extrapolation, since we have no homes with a size of 0 square feet in our data set. The slope of this model is \$4104.40. This means that, holding all other factors constant, each increase 100 sq ft in an Edwards home, we can expect an increase of \$4104.40 in home price.
+
+#### NAmes
+
+$\text{Sales Price} = 8839.5 + 8716.3 \cdot (\text{Living Area}) + 66984.1 - 4453.5 \cdot (\text{Living Area})$
+
+$\longrightarrow \text{Sales Price} = 75823.6 + 4262.8 \cdot (\text{Living Area})$
+
+For a home in NAmes, we can expect a intercept increase of \$66984.1 from the intercept associated with a BrkSide property. This adjustment has an associated p-value of less than 0.0001 (t-test), which is statistically significant at the alpha = 0.05 confidence level, so we may reject the null hypothesis that the change in intercept is equal to 0. The confidence interval for this intercept adjustment is (51577.81, 82390.46). Note that 0 does not fall within this interval.
+
+The slope adjustment for home size for a NAmes home in comparison to a BrkSide home is -\$4453.50, with a p-value of less than 0.0001 (t-test), which is statistically significant at the alpha = 0.05 confidence level. As a result, we may reject the null hypothesis that the slope adjustment is equal to 0. The confidence interval for this change in slope is (-5914.18, -2992.80). Note that 0 does not fall within this interval.
+
+The adjusted model for a NAmes home has an intercept of \$75823.60, which is an extrapolation, since we have no homes with a size of 0 square feet in our data set. The slope of this model is \$4262.80. This means that, holding all other factors constant, each increase 100 sq ft in a NAmes home, we can expect an increase of \$4262.80 in home price.
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+# Analysis 2 
+
+### Check / Clean Data
+
+```{r}
+gg_miss_var(house_train[,1:40])
+gg_miss_var(house_train[,41:81])
+
+c_train = data.frame(t(na.omit(t(house_train))))
+
+c_train = house_train[colSums(is.na(house_train)) == 0]
+
+#c_train %>% select(c_train, !is.numeric)
+
+```
+
+### Forward Selection
+
+```{r}
+c_train
+library(olsrr)
+new_fit = lm(SalePrice ~. , data = c_train)
+
+ols_step_forward_p(new_fit, penter = 0.05, details = TRUE)
+```
+
+## Forwards Model
+
+```{r}
+forward_fit = lm(SalePrice ~ OverallQual + GrLivArea + Neighborhood + KitchenQual + RoofMatl + BsmtFinSF1 + MSSubClass + Condition2 + ExterQual + SaleCondition + LotArea + YearBuilt + OverallCond + GarageArea + TotalBsmtSF + PoolArea + BedroomAbvGr + Functional + BldgType + LandSlope + LowQualFinSF + Foundation + KitchenAbvGr + Street + Condition1 + LandContour + ScreenPorch + SaleType + MoSold + BsmtFinSF2 + BsmtUnfSF + GarageCars + WoodDeckSF + Exterior1st + YearRemodAdd, data = c_train)
+
+summary(forward_fit)
+```
+# Backwards
+
+```{r}
+ols_step_backward_p(new_fit, prem = 0.05, details = TRUE)
+```
+
+## Backward Selection
+```{r}
+backward_fit = lm(SalePrice ~  HalfBath + MSSubClass + BsmtHalfBath + MiscVal + PavedDrive + LotShape + ExterCond + YrSold + EnclosedPorch + Id + BsmtFullBath + CentralAir + Exterior2nd + HeatingQC + FullBath+  Utilities + OpenPorchSF + X3SsnPorch, data = c_train)
+
+summary(backward_fit)
+```
+
+# Stepwise
+
+
+
+```{r}
+ols_step_both_p(new_fit, pent = 0.05, prem = 0.05, details = TRUE)
+
+```
+
+## Stepwise Model
+
+```{r}
+stepwise_fit = lm(SalePrice ~ OverallQual+GrLivArea+Neighborhood+KitchenQual+RoofMatl+BsmtFinSF1+MSSubClass+Condition2+ExterQual+SaleCondition+LotArea+YearBuilt+OverallCond+GarageArea+TotalBsmtSF+PoolArea+BedroomAbvGr+Functional+BldgType+MSSubClass+LandSlope+Foundation+LowQualFinSF+KitchenAbvGr+Street+Condition1+LandContour+ScreenPorch+SaleType+SaleCondition+MoSold+RoofStyle+WoodDeckSF+BsmtFinSF2+Fireplaces+WoodDeckSF+YearRemodAdd+Exterior1st+RoofStyle, data = c_train)
+
+summary(stepwise_fit)
+```
+
+# Custom Selection
+
+```{r}
+library(FSelector)
+
+cfs(SalePrice ~. , data = c_train)
+
+```
+
+## Custom Model
+```{r}
+custom_fit = lm(SalePrice ~ OverallQual + TotalBsmtSF + GrLivArea + GarageCars, data = c_train)
+
+summary(custom_fit)
+```
+
+<br>
+
+<br>
+
+# Model Comparisons
+
+
+# Forward Selection
+```{r}
+summary(forward_fit)
+```
+# Backward Selection
+```{r}
+summary(backward_fit)
+```
+# Stepwise Selection
+```{r}
+summary(stepwise_fit)
+```
+# Custom Selection
+
+```{r}
+summary(custom_fit)
+```
