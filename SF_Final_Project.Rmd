@@ -548,18 +548,67 @@ The adjusted model for a NAmes home has an intercept of \$75823.60, which is an 
 gg_miss_var(house_train[,1:40])
 gg_miss_var(house_train[,41:81])
 
-c_train = data.frame(t(na.omit(t(house_train))))
 
-c_train = house_train[colSums(is.na(house_train)) == 0]
+head(house_train[colSums(is.na(house_train)) > 0])
 
-#c_train %>% select(c_train, !is.numeric)
+c_train = house_train
 
+# Lot Frontage
+
+c_train$LotFrontage[is.na(c_train$LotFrontage)] = 0
+
+# Alley
+
+c_train$Alley[is.na(c_train$Alley)] = "none"
+
+#GarageType
+
+c_train$GarageType[is.na(c_train$GarageType)] = "none"
+
+#Fence
+
+c_train$Fence[is.na(c_train$Fence)] = "none"
+
+#MiscFeature
+
+c_train$MiscFeature[is.na(c_train$MiscFeature)] = "none"
+
+
+#Basement
+
+c_train$BsmtQual[is.na(c_train$BsmtQual)] = "NoBsmnt"
+c_train$BsmtCond[is.na(c_train$BsmtCond)] = "NoBsmnt"
+c_train$BsmtExposure[is.na(c_train$BsmtExposure)] = "NoBsmnt"
+c_train$BsmtFinType1[is.na(c_train$BsmtFinType1)] = "NoBsmnt"
+c_train$BsmtFinType2[is.na(c_train$BsmtFinType2)] = "NoBsmnt"
+
+#FireplaceQu
+
+c_train$FireplaceQu[is.na(c_train$FireplaceQu)] = "NoFrplc"
+
+# Garage
+
+c_train$GarageFinish[is.na(c_train$GarageFinish)] = "NoGrg"
+c_train$GarageQual[is.na(c_train$GarageQual)] = "NoGrg"
+c_train$GarageCond[is.na(c_train$GarageCond)] = "NoGrg"
+
+#PoolQC
+
+c_train$PoolQC[is.na(c_train$PoolQC)] = "NoPl"
+
+
+# Filter out remaining NA Values
+
+c_train = c_train %>%
+  filter(!is.na(MasVnrArea) & !is.na(MasVnrType) & !is.na(Electrical) & !is.na(GarageYrBlt)) 
+
+gg_miss_var(c_train)
 ```
 
 ### Forward Selection
 
 ```{r}
-c_train
+
 library(olsrr)
 new_fit = lm(SalePrice ~. , data = c_train)
 
@@ -569,9 +618,11 @@ ols_step_forward_p(new_fit, penter = 0.05, details = TRUE)
 ## Forwards Model
 
 ```{r}
-forward_fit = lm(SalePrice ~ OverallQual + GrLivArea + Neighborhood + KitchenQual + RoofMatl + BsmtFinSF1 + MSSubClass + Condition2 + ExterQual + SaleCondition + LotArea + YearBuilt + OverallCond + GarageArea + TotalBsmtSF + PoolArea + BedroomAbvGr + Functional + BldgType + LandSlope + LowQualFinSF + Foundation + KitchenAbvGr + Street + Condition1 + LandContour + ScreenPorch + SaleType + MoSold + BsmtFinSF2 + BsmtUnfSF + GarageCars + WoodDeckSF + Exterior1st + YearRemodAdd, data = c_train)
+forward_fit = lm(SalePrice ~ OverallQual + GrLivArea + Neighborhood + BsmtQual + RoofMatl + BsmtFinSF1 + MSSubClass + BsmtExposure + KitchenQual + Condition2 + OverallCond + YearBuilt + LotArea + TotalBsmtSF + SaleCondition + PoolQC + GarageCars + ExterQual + KitchenAbvGr + LotConfig + Functional + Condition1 + LandSlope + Street + LandContour + BedroomAbvGr + ScreenPorch + PoolArea + LowQualFinSF + TotRmsAbvGrd  + MasVnrArea + MSZoning + GarageArea, data = c_train)
 
 summary(forward_fit)
+
+# Note: Exterior1st was removed from model because the test dataset contained values for this attribute that do not exist in the train dataset, and this caused issues with prediction.
 ```
 # Backwards
 
@@ -581,9 +632,12 @@ ols_step_backward_p(new_fit, prem = 0.05, details = TRUE)
 
 ## Backward Selection
 ```{r}
-backward_fit = lm(SalePrice ~  HalfBath + MSSubClass + BsmtHalfBath + MiscVal + PavedDrive + LotShape + ExterCond + YrSold + EnclosedPorch + Id + BsmtFullBath + CentralAir + Exterior2nd + HeatingQC + FullBath+  Utilities + OpenPorchSF + X3SsnPorch, data = c_train)
+backward_fit = lm(SalePrice ~  Alley + EnclosedPorch + Exterior2nd + OpenPorchSF + Electrical + Heating + CentralAir + GarageYrBlt + BsmtHalfBath + MiscFeature + MiscVal + LotShape + BsmtFinType2 + HalfBath  + MSSubClass + PavedDrive + BsmtCond + YrSold + LotFrontage + BsmtFullBath + Id  + SaleCondition + HeatingQC + FullBath + Foundation + X3SsnPorch + FireplaceQu + HouseStyle + BsmtFinType1 + Utilities + MasVnrType + MoSold + Fireplaces + YearRemodAdd + Fence + WoodDeckSF + RoofStyle, data = c_train)
 
 summary(backward_fit)
+
+# Note: ExteriorCond, GarageFinish, and GarageType was removed from model because the test dataset contained values for this attribute that do not exist in the train dataset, and this caused issues with prediction.
+
 ```
 
 # Stepwise
@@ -592,15 +646,17 @@ summary(backward_fit)
 
 ```{r}
 ols_step_both_p(new_fit, pent = 0.05, prem = 0.05, details = TRUE)
-
 ```
 
 ## Stepwise Model
 
 ```{r}
-stepwise_fit = lm(SalePrice ~ OverallQual+GrLivArea+Neighborhood+KitchenQual+RoofMatl+BsmtFinSF1+MSSubClass+Condition2+ExterQual+SaleCondition+LotArea+YearBuilt+OverallCond+GarageArea+TotalBsmtSF+PoolArea+BedroomAbvGr+Functional+BldgType+MSSubClass+LandSlope+Foundation+LowQualFinSF+KitchenAbvGr+Street+Condition1+LandContour+ScreenPorch+SaleType+SaleCondition+MoSold+RoofStyle+WoodDeckSF+BsmtFinSF2+Fireplaces+WoodDeckSF+YearRemodAdd+Exterior1st+RoofStyle, data = c_train)
+stepwise_fit = lm(SalePrice ~ OverallQual + GrLivArea + Neighborhood + BsmtQual + RoofMatl + BsmtFinSF1 + MSSubClass + BsmtExposure + KitchenQual + Condition2 + OverallCond + YearBuilt + LotArea + TotalBsmtSF + SaleCondition + PoolQC + GarageCars + ExterQual + KitchenAbvGr + LotConfig + Functional + Condition1 + LandSlope + Street + LandContour + BedroomAbvGr + ScreenPorch + PoolArea + LowQualFinSF + TotRmsAbvGrd + MasVnrArea + MSZoning + GarageArea, data = c_train)
 
 summary(stepwise_fit)
+
+# Note: Exterior1st was removed from model because the test dataset contained values for this attribute that do not exist in the train dataset, and this caused issues with prediction.
+
 ```
 
 # Custom Selection
@@ -614,7 +670,10 @@ cfs(SalePrice ~. , data = c_train)
 
 ## Custom Model
 ```{r}
-custom_fit = lm(SalePrice ~ OverallQual + TotalBsmtSF + GrLivArea + GarageCars, data = c_train)
+
+# Model uses quality, basement size, home size, garage type, bedroom location, porch type, roofing material, and neighborhood
+
+custom_fit = lm(SalePrice ~ OverallQual + TotalBsmtSF + GrLivArea + GarageCars +BedroomAbvGr + ScreenPorch + RoofMatl + Neighborhood, data = c_train) 
 
 summary(custom_fit)
 ```
@@ -643,3 +702,133 @@ summary(stepwise_fit)
 ```{r}
 summary(custom_fit)
 ```
+
+# Clean/Format Test Data
+```{r}
+
+test_adj = house_test
+
+# Lot Frontage
+
+test_adj$LotFrontage[is.na(test_adj$LotFrontage)] = 0
+
+# Alley
+
+test_adj$Alley[is.na(test_adj$Alley)] = "none"
+
+#GarageType
+
+test_adj$GarageType[is.na(test_adj$GarageType)] = "none"
+
+#Fence
+
+test_adj$Fence[is.na(test_adj$Fence)] = "none"
+
+#MiscFeature
+
+test_adj$MiscFeature[is.na(test_adj$MiscFeature)] = "none"
+
+
+#Basement
+
+test_adj$BsmtQual[is.na(test_adj$BsmtQual)] = "NoBsmnt"
+test_adj$BsmtCond[is.na(test_adj$BsmtCond)] = "NoBsmnt"
+test_adj$BsmtExposure[is.na(test_adj$BsmtExposure)] = "NoBsmnt"
+test_adj$BsmtFinType1[is.na(test_adj$BsmtFinType1)] = "NoBsmnt"
+test_adj$BsmtFinType2[is.na(test_adj$BsmtFinType2)] = "NoBsmnt"
+
+#FireplaceQu
+
+test_adj$FireplaceQu[is.na(test_adj$FireplaceQu)] = "NoFrplc"
+
+# Garage
+
+test_adj$GarageFinish[is.na(test_adj$GarageFinish)] = "NoGrg"
+test_adj$GarageQual[is.na(test_adj$GarageQual)] = "NoGrg"
+test_adj$GarageCond[is.na(test_adj$GarageCond)] = "NoGrg"
+
+#PoolQC
+
+test_adj$PoolQC[is.na(test_adj$PoolQC)] = "NoPl"
+
+```
+
+# Kaggle Scores
+
+```{r}
+custom_kaggle = data.frame(test_adj$Id,predict(custom_fit, newdata = test_adj))
+
+forward_kaggle = data.frame(test_adj$Id,predict(forward_fit, newdata = test_adj))
+
+backward_kaggle = data.frame(test_adj$Id,predict(backward_fit, newdata = test_adj))
+
+stepwise_kaggle = data.frame(test_adj$Id,predict(stepwise_fit, newdata = test_adj))
+
+colnames(custom_kaggle) = c("ID", "SalePrice")
+
+colnames(forward_kaggle) = c("ID", "SalePrice")
+
+colnames(backward_kaggle) = c("ID", "SalePrice")
+
+colnames(stepwise_kaggle) = c("ID", "SalePrice")
+
+#Fix NA Values for Kaggle Score
+
+forward_kaggle %>%
+  filter(!is.na(SalePrice)) %>%
+  select(SalePrice) %>%
+  summarize(Avg = mean(SalePrice))
+#179893.2	
+
+forward_kaggle$SalePrice[is.na(forward_kaggle$SalePrice)] = 179893.2	
+
+backward_kaggle %>%
+  filter(!is.na(SalePrice)) %>%
+  select(SalePrice) %>%
+  summarize(Avg = mean(SalePrice))
+#185194.8
+
+backward_kaggle$SalePrice[is.na(backward_kaggle$SalePrice)] =185194.8
+
+
+stepwise_kaggle %>%
+  filter(!is.na(SalePrice)) %>%
+  select(SalePrice) %>%
+  summarize(Avg = mean(SalePrice))
+#179893.2
+
+stepwise_kaggle$SalePrice[is.na(stepwise_kaggle$SalePrice)] =179893.2	
+
+custom_kaggle %>%
+  filter(!is.na(SalePrice)) %>%
+  select(SalePrice) %>%
+  summarize(Avg = mean(SalePrice))
+#177682.9
+
+custom_kaggle$SalePrice[is.na(custom_kaggle$SalePrice)] =177682.9	
+
+write.csv(custom_kaggle, "/Users/elyjiahpotter/Desktop/Cust_Kaggle.csv", row.names=FALSE)
+
+write.csv(forward_kaggle, "/Users/elyjiahpotter/Desktop/Forward_Kaggle.csv", row.names=FALSE)
+
+write.csv(backward_kaggle, "/Users/elyjiahpotter/Desktop/Backward_Kaggle.csv", row.names=FALSE)
+
+write.csv(stepwise_kaggle, "/Users/elyjiahpotter/Desktop/Stepwise_Kaggle.csv", row.names=FALSE)
+```
+
+
+<br>
+
+<br>
+
+
+# Kaggle Scores
+
+### Forward: 0.45954
+
+### Backward: 0.51439
+
+### Stepwise: 0.45954
+
+### Custom: 0.35837
+
